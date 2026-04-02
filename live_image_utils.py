@@ -5,32 +5,24 @@ import xgboost as xgb
 import numpy as np
 import matplotlib.pyplot as plt
 from bs4 import BeautifulSoup
-import pandas as pd
-from src.utils import extract_wells_info
-def read_value(t, path, suffix=''):
+
+
+from utils import extract_wells_info
+
+def read_value(t, path, col_phrase):
     
-    df = pd.read_csv(os.path.join(path, f"Img_t{(4-len(str(t)))*'0'+str(t)}-nuc_quant{suffix}.csv")).set_index('nucleus_id')
+    df = pd.read_csv(os.path.join(path, f"Img_t{(4-len(str(t)))*'0'+str(t)}-nuc_quant_pi.csv")).set_index('nucleus_id')
     #cols = [col for col in df.columns if col_phrase in col]
     #cols = cols+['time_point_index']
     df['time_point_index'] = t
     return df#[cols]
 
-def read_img(t, path, suffix=''):
-    df = pd.read_csv(os.path.join(path, f"Img_t{(4-len(str(t)))*'0'+str(t)}-img_quant{suffix}.csv"))#.set_index('nucleus_id')
+def read_img(t, path):
+    df = pd.read_csv(os.path.join(path, f"Img_t{(4-len(str(t)))*'0'+str(t)}-img_quant_pi.csv"))#.set_index('nucleus_id')
     #cols = [col for col in df.columns if col_phrase in col]
     #cols = cols+['time_point_index']
     df['time_point_index'] = t
     return df#[cols]
-
-def read_perinuclei(t, path, suffix=''):
-    df = pd.read_csv(os.path.join(path, f"Img_t{(4-len(str(t)))*'0'+str(t)}-per_quant{suffix}.csv"))#.set_index('nucleus_id')
-    #cols = [col for col in df.columns if col_phrase in col]
-    #cols = cols+['time_point_index']
-    df['time_point_index'] = t
-    return df#[cols]
-
-
-
 def rename_cols(df):
     rename_map = {}
     for col in df.columns:
@@ -38,10 +30,6 @@ def rename_cols(df):
             rename_map[col] = col.replace("dna_", "h2b_")
         if "nuc_" in col:
             rename_map[col] = col.replace("nuc_", "h2b_")
-        if "hoechst_" in col:
-            rename_map[col] = col.replace("hoechst_", "h2b_")
-        if "cellevent_" in col:
-            rename_map[col] = col.replace("cellevent_", "ce_")
     return df.rename(rename_map, axis=1)
 
 def extract_tracks(path):
@@ -50,25 +38,13 @@ def extract_tracks(path):
         tracks = pd.read_csv(pi_path, sep=",")
     else:
         tracks = pd.read_csv(os.path.join(path, "tracks.csv"), sep=",")
-    try:
-        dfs = [read_value(t, path, '_pi') for t in tracks["time_point_index"].unique()]
-        img_df = pd.concat(
-        [read_img(t, path, '_pi') for t in tracks["time_point_index"].unique()]
-    ).set_index("time_point_index")
-    except:
-        dfs = [read_value(t, path) for t in tracks["time_point_index"].unique()]
-        img_df = pd.concat(
-        [read_img(t, path) for t in tracks["time_point_index"].unique()]
-    ).set_index("time_point_index")
-    #perinucs = [read_perinuclei(t, path) for t in tracks["time_point_index"].unique()]
+    dfs = [read_value(t, path, "pi") for t in tracks["time_point_index"].unique()]
     tracks = tracks.rename({"nucleus_index": "nucleus_id"}, axis=1).merge(
         pd.concat(dfs).reset_index(), on=["nucleus_id", "time_point_index"], how="left"
     )
-
-    #tracks = tracks.merge(
-    #    pd.concat(perinucs).reset_index().rename({"corresp_nucleus_id": "nucleus_id"}, axis=1), on=["nucleus_id", "time_point_index"], how="left", suffixes=('', '_per')   )
-    
-    
+    img_df = pd.concat(
+        [read_img(t, path) for t in tracks["time_point_index"].unique()]
+    ).set_index("time_point_index")
     img_df = rename_cols(img_df)
     tracks = rename_cols(tracks)
     tracks = tracks.merge(img_df, on="time_point_index", how="left", suffixes=("", "_img"))
@@ -80,9 +56,8 @@ def extract_tracks(path):
     tracks["well"] = path.split("/")[-1].split("-")[0]
     return tracks
 
-#, 'pi_intensity_q4_mean']
-
-def calculate_track_stats(df, track_columns):
+track_columns = ['h2b_intensity_mean', 'ce_intensity_mean', 'pi_intensity_mean']#, 'pi_intensity_q4_mean']
+def calculate_track_stats(df):
     for col in track_columns:
         df[col] = df[col]/df[col+'_img']
     stats = df[track_columns].agg(['mean', 'std', 'min', 'max'])  # Średnia, odchylenie, min, max
@@ -128,32 +103,26 @@ def clean_data(track_stats):
     return track_stats
 
 
-def extract_well(rootdir, model=None, n=20, track_columns=['h2b_intensity_mean', 'ce_intensity_mean', 'pi_intensity_mean']):
+def extract_well(rootdir, model, n=20):
     print(rootdir)
     tracks = pd.DataFrame()
     for name in os.listdir(rootdir):
         subdir = os.path.join(rootdir, name)
-        if os.path.isdir(subdir) and re.match(r"\d{4}-ST", subdir.split('/')[-1]):#fullmatch
-            try:
-                well_tracks = extract_tracks(subdir)
-                well_tracks['All tracks'] = len(well_tracks)
-                well_tracks['Eligible tracks'] = len(well_tracks[well_tracks['track_length']>n])
-            except:
-                well_tracks = pd.DataFrame()
+        if os.path.isdir(subdir) and re.fullmatch(r"\d{4}-ST", subdir.split('/')[-1]):
             
+            well_tracks = extract_tracks(subdir)
+            well_tracks['All tracks'] = len(well_tracks)
+            well_tracks['Eligible tracks'] = len(well_tracks[well_tracks['track_length']>n])
             tracks = pd.concat((tracks, well_tracks), axis=0)
     #print('All tracks:', len(tracks.groupby(['track_index', 'experiment', 'well'])))
     tracks = tracks[tracks['track_length']>n]
     #print('Eligible tracks:', tracks.groupby(['track_index', 'experiment', 'well']).count().drop_duplicates())
     
-    track_stats = tracks.groupby(['track_index', 'experiment', 'well']).apply(lambda x: calculate_track_stats(x, track_columns))
+    track_stats = tracks.groupby(['track_index', 'experiment', 'well']).apply(calculate_track_stats)
     print('Cleaning data')
     track_stats = clean_data(track_stats)
     print('Predicting')
-    if model is not None:
-        track_stats['label'] = model.predict(track_stats.drop(['h2b_intensity_max_t', 'ce_intensity_max_t', 'pi_intensity_max_t'], axis=1))
-    else:
-        track_stats['label'] = None
+    track_stats['label'] = model.predict(track_stats.drop(['h2b_intensity_max_t', 'ce_intensity_max_t', 'pi_intensity_max_t'], axis=1))
     print('merging')
     track_stats = pd.merge(track_stats.reset_index(), extract_wells_info(rootdir), on=['well', 'experiment'])
     #track_stats = pd.merge(track_stats.reset_index(), tracks[['well', 'experiment', 'All tracks', 'Eligible tracks']], on=['well', 'experiment'], how='left')
@@ -175,14 +144,11 @@ def collect_nuclei_data(root_path):
     data = []
 
     for dirpath in os.listdir(root_path):
-        h2b=False
         dirpath = os.path.join(root_path, dirpath)
         if os.path.isfile(dirpath):
             continue
-        
-        # Updated pattern: allows optional "_h2b"
-        pattern = r'Img_t\d{4}-nuclei_h2b\.txt$'
-        
+        pattern = r'Img_t\d{4}-nuclei\.txt$' #r'Img_t\d{4}-nuclei_h2b\.txt$'
+
         for filename in os.listdir(dirpath):
 
             if re.match(pattern, filename):
@@ -203,27 +169,5 @@ def collect_nuclei_data(root_path):
                     'time_point_index': time_point_index,
                     'nuclei_number': count,
                 })
-                h2b=True
-        if not h2b:
-            for filename in os.listdir(dirpath):
-    
-                if re.match(r'Img_t\d{4}-nuclei\.txt$', filename):
-                    file_path = os.path.join(dirpath, filename)
-                    match = re.search(r't(\d{4})', filename)
-                    if not match:
-                        continue
-                    time_point_index = int(match.group(1))
-
-                    well = re.sub(r'\D', '', os.path.basename(dirpath))
-                    experiment = root_path
-
-                    count = get_nuclei_number(file_path)
-
-                    data.append({
-                        'well': well,
-                        'experiment': experiment,
-                        'time_point_index': time_point_index,
-                        'nuclei_number': count,
-                    })
             
     return pd.DataFrame(data)

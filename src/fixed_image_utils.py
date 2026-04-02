@@ -7,7 +7,7 @@ import numpy as np
 from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 
-from live_image_utils import extract_wells_info
+from utils import extract_wells_info
 
 def gaussian(x, amp, mu, sigma):
     return amp * np.exp(-(x - mu)**2 / (2 * sigma**2))
@@ -137,9 +137,9 @@ def calculate_infection_proportion(df):
     
     return result
 
-def read_data(paths, use_mock=False):
+def read_data(paths, use_mock=False, col = "virus_intensity_mean"):
     nuclei = []
-    col = "virus_intensity_mean"
+    
     for path in paths:
         exp_nuclei = []
         print("Read: ", path)
@@ -162,6 +162,7 @@ def read_data(paths, use_mock=False):
         if 'virus_intensity_mean' not in exp.columns:
             exp['virus_intensity_mean'] = exp['virus2_intensity_mean']
         if len(exp[exp["Virus"]=='mock'])!=0 and use_mock:
+            print(len(exp[col][exp["Virus"]=='mock']))
             popt, pcov, bin_centers, counts = fit_gaussian_to_noninfected(exp[col][exp["Virus"]=='mock'])
             if pcov is not None:
                 infected_params, icov, bin_centers, counts = fit_gaussian_mixture_to_infected_wells(exp[col], popt)#[exp["Virus"]!='mock']
